@@ -30,69 +30,39 @@
 import rospy
 
 from geometry_msgs.msg import Twist
+from kobuki_msgs.msg import BumperEvent
 
-import sys, select, termios, tty
+import sys, select, termios, tty, time, random
 
-msg = """
-Control Your Turtlebot!
----------------------------
-Moving around:
-   u    i    o
-   j    k    l
-   m    ,    .
+bumped = False
+bump_time = time.time()
+angles = [-1, 1]
+angle = 1
 
-q/z : increase/decrease max speeds by 10%
-w/x : increase/decrease only linear speed by 10%
-e/c : increase/decrease only angular speed by 10%
-space key, k : force stop
-anything else : stop smoothly
-
-CTRL-C to quit
-"""
-
-moveBindings = {
-        'i':(1,0),
-        'o':(1,-1),
-        'j':(0,1),
-        'l':(0,-1),
-        'u':(1,1),
-        ',':(-1,0),
-        '.':(-1,1),
-        'm':(-1,-1),
-           }
-
-speedBindings={
-        'q':(1.1,1.1),
-        'z':(.9,.9),
-        'w':(1.1,1),
-        'x':(.9,1),
-        'e':(1,1.1),
-        'c':(1,.9),
-          }
-
-def getKey():
-    tty.setraw(sys.stdin.fileno())
-    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
-    if rlist:
-        key = sys.stdin.read(1)
+def bumped_callback(data):
+    global bumped
+    global bump_time
+    global angle
+    if ( data.state == BumperEvent.RELEASED ) :
+        state = "released"
     else:
-        key = ''
-
-    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-    return key
-
-speed = .2
-turn = 1
-
-def vels(speed,turn):
-    return "currently:\tspeed %s\tturn %s " % (speed,turn)
+        state = "pressed"
+        bumped = True
+        bump_time = time.time()
+        angle = random.choice(angles)
+    if ( data.bumper == BumperEvent.LEFT ) :
+        bumper = "Left"
+    elif ( data.bumper == BumperEvent.CENTER ) :
+        bumper = "Center"
+    else:
+        bumper = "Right"
 
 if __name__=="__main__":
     settings = termios.tcgetattr(sys.stdin)
-    
+
     rospy.init_node('turtlebot_teleop')
     pub = rospy.Publisher('~cmd_vel', Twist, queue_size=5)
-
+    move_sub = rospy.Subscriber('/mobile_base/events/bumper', BumperEvent, bumped_callback)
     x = 0
     th = 0
     status = 0
@@ -103,61 +73,19 @@ if __name__=="__main__":
     control_speed = 0
     control_turn = 0
     try:
-        print msg
-        print vels(speed,turn)
         while(1):
-            key = getKey()
-            if key in moveBindings.keys():
-                x = moveBindings[key][0]
-                th = moveBindings[key][1]
-                count = 0
-            elif key in speedBindings.keys():
-                speed = speed * speedBindings[key][0]
-                turn = turn * speedBindings[key][1]
-                count = 0
-
-                print vels(speed,turn)
-                if (status == 14):
-                    print msg
-                status = (status + 1) % 15
-            elif key == ' ' or key == 'k' :
-                x = 0
-                th = 0
-                control_speed = 0
-                control_turn = 0
+            if time.time() - bump_time > random.randint(3,5):
+                bumped = False
+            if not bumped:
+                move = 0.25
+                rotate = 0
             else:
-                count = count + 1
-                if count > 4:
-                    x = 0
-                    th = 0
-                if (key == '\x03'):
-                    break
-
-            target_speed = speed * x
-            target_turn = turn * th
-
-            if target_speed > control_speed:
-                control_speed = min( target_speed, control_speed + 0.02 )
-            elif target_speed < control_speed:
-                control_speed = max( target_speed, control_speed - 0.02 )
-            else:
-                control_speed = target_speed
-
-            if target_turn > control_turn:
-                control_turn = min( target_turn, control_turn + 0.1 )
-            elif target_turn < control_turn:
-                control_turn = max( target_turn, control_turn - 0.1 )
-            else:
-                control_turn = target_turn
-
+                move = -0.1
+                rotate = 0.5
             twist = Twist()
-            twist.linear.x = control_speed; twist.linear.y = 0; twist.linear.z = 0
-            twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = control_turn
+            twist.linear.x = move; twist.linear.y = 0; twist.linear.z = 0
+            twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = angle * rotate
             pub.publish(twist)
-
-            #print("loop: {0}".format(count))
-            #print("target: vx: {0}, wz: {1}".format(target_speed, target_turn))
-            #print("publihsed: vx: {0}, wz: {1}".format(twist.linear.x, twist.angular.z))
 
     except:
         print e
@@ -166,7 +94,7 @@ if __name__=="__main__":
         twist = Twist()
         twist.linear.x = 0; twist.linear.y = 0; twist.linear.z = 0
         twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = 0
+        pub = rospy.Publisher('~cmd_vel', Twist, queue_size=5)
         pub.publish(twist)
 
     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-
